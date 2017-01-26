@@ -1,0 +1,56 @@
+#!/usr/bin/perl
+
+use HTTP::Request;
+use LWP::UserAgent;
+use Data::Dumper;
+use Encode qw(decode encode);
+use XML::Simple qw(:strict);
+use DBI;
+
+my $host_name = "localhost";
+my $db_name = "dbname";
+my $dsn = "DBI:mysql:host=$host_name;database=$db_name";
+my $db_user = "username";
+my $db_pass = "password";
+
+use strict;
+
+my $ip="address/hostname of sc18/23";
+
+my $id=int(rand(32768));
+my $post = "id=${id}&show=D_A_1_1|D_A_1_2|D_A_3_2|D_Y_1|D_A_1_3|D_Y_5~";
+my $uri = "http://${ip}/mux_http";
+my $req = HTTP::Request->new( 'POST', $uri );
+my $ua = LWP::UserAgent->new();
+
+my $dbh=DBI->connect ($dsn, $db_user, $db_pass, {PrintError => 1, RaiseError => 0, mysql_enable_utf8 => 1, mysql_auto_reconnect => 1});
+my $sql;
+
+$req->header( 'Content-Type' => 'application/x-www-form-urlencoded' );
+$req->content( $post );
+
+while(1) {
+  my $response=$ua->request( $req );
+  if ($response->is_success && $response->content ne '') {
+    my $xml=XMLin($response->content, forcearray => 1, KeyAttr => []);
+    my $current_flow = $xml->{'D_A_1_1'}[0]*1.0;
+    my $capacity_remain = $xml->{'D_A_1_2'}[0]*1.0;
+    my $regeneration_percent = $xml->{'D_A_3_2'}[0]*1.0;
+    my $regeneration_step = $xml->{'D_Y_5'}[0]*1.0;
+    my $water_consumption = $xml->{'D_Y_1'}[0]*1.0;
+    my $capacity_full = $xml->{'D_A_1_3'}[0]*1.0;
+    
+    my ($current_flow_last, $capacity_remain_last, $regeneration_percent_last, $regeneration_step_last, $water_consumption_last, $capacity_full_last) = $dbh->selectrow_array("select current_flow, capacity_remain, regeneration_percent, regeneration_step, water_consumption, capacity_full from gruenbeck order by updated desc limit 1;");
+    
+    if($current_flow != $current_flow_last ||
+       $capacity_remain != $capacity_remain_last ||
+       $regeneration_percent != $regeneration_percent_last ||
+       $regeneration_step != $regeneration_step_last ||
+       $water_consumption != $water_consumption_last ||
+       $capacity_full != $capacity_full) {
+       $sql="insert into `gruenbeck` (`current_flow`, `capacity_remain`, `regeneration_percent`, `regeneration_step`, `water_consumption`, `capacity_full`) values ($current_flow, $capacity_remain, $regeneration_percent, $regeneration_step, $water_consumption, $capacity_full);";
+       $dbh->do($sql);
+    }
+  }
+  sleep 1;
+}
